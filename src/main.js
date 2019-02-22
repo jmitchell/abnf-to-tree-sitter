@@ -212,7 +212,12 @@ const test = (name, usesCoreRules, startRule) => {
 
     const testDir = `./build/test/${name}`;
     if (!fs.existsSync(testDir)) {
-	fs.mkdirSync(testDir, { recursive: true });
+	// fs.mkdirSync(testDir, { recursive: true });
+
+	// TODO: After stable Atom supports Node 10.x remove mkdirp
+	// dependency and replace these lines.
+	const mkdirp = require('mkdirp');
+	mkdirp.sync(testDir);
     }
     fs.writeFileSync(`${testDir}/grammar.js`, toTreeSitter(g, startRule, name, usesCoreRules));
 

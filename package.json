@@ -15,7 +15,8 @@
   "author": "Jacob Mitchell",
   "license": "MIT",
   "dependencies": {
+    "mkdirp": "^0.5.1",
     "tree-sitter": "^0.13.23",
-    "tree-sitter-abnf": "0.0.3"
+    "tree-sitter-abnf": "1.0.0"
   }
 }
