@@ -1,0 +1,21 @@
+{
+  "name": "abnf-to-tree-sitter",
+  "version": "0.0.0",
+  "description": "Convert ABNF grammars to tree-sitter grammar.js inputs",
+  "main": "src/main",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "grammar",
+    "abnf",
+    "tree-sitter",
+    "syntax"
+  ],
+  "author": "Jacob Mitchell",
+  "license": "MIT",
+  "dependencies": {
+    "tree-sitter": "^0.13.23",
+    "tree-sitter-abnf": "0.0.3"
+  }
+}
