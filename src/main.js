@@ -3,15 +3,16 @@ const fs = require('fs');
 const path = require('path');
 
 const abnf = (options={}) => {
-    // required
-    const grammarSource = options.source || assert(false, 'missing required option: "source"');
-    const startRule = options.startRule || assert(false, 'missing required option: "startRule"');
+    const normalizeRulename = (name) => name.replace(/-/g, '_');
 
-    // optional
+    // required parameters
+    const grammarSource = options.source || assert(false, 'missing required option: "source"');
+    const startRule = normalizeRulename(options.startRule) || assert(false, 'missing required option: "startRule"');
+
+    // optional parameters
     const languageName = options.name || path.basename(grammarSource, path.extname(grammarSource));
     const includeCoreRules = options.usesCoreRules || false;
-    const hiddenRules = options.hiddenRules || []; // TODO: use this
-
+    const hiddenRules = (options.hiddenRules || []).map(normalizeRulename);
 
     const abnfGrammar = (abnfFile) => {
 	const Parser = require('tree-sitter');
@@ -27,10 +28,6 @@ const abnf = (options={}) => {
     const toTreeSitter = (abnfTree, startRule, langName='the_language_name', includeCoreRules=true) => {
 	const unsupported = (node) => {
             console.error("\x1b[31munsupported node type: \x1b[1m" + node.type.toString() + "\t" + node.text + "\x1b[0m");
-	};
-
-	const rulename = (node) => {
-            return node.text.replace(/-/g, "_");
 	};
 
 	const coreRules = (!includeCoreRules)
@@ -90,7 +87,7 @@ ${convert(node.firstNamedChild)}
 		return `    ${name}: $ =>
       ${elements}`;
             case 'rulename':
-		return rulename(node);
+		return normalizeRulename(node.text);
             case 'defined_as':
 		return node.text.trim();
             case 'alternation':
@@ -146,7 +143,7 @@ ${convert(node.firstNamedChild)}
 		switch (node.firstNamedChild.type) {
 		case 'rulename':
 		case 'core_rulename':
-                    return `$.${rulename(node)}`;
+                    return `$.${normalizeRulename(node.text)}`;
 		default:
                     return convert(node.firstNamedChild);
 		}
@@ -221,7 +218,7 @@ ${convert(node.firstNamedChild)}
         startRule,
         languageName,
         includeCoreRules,
-        hiddenRules,
+        hiddenRules,		// TODO: use this
 
         parsedGrammar: abnfGrammar(grammarSource),
 
@@ -258,7 +255,7 @@ const examples = '../tree-sitter-abnf/examples';
 
 const postal = abnf({
     source: path.join(examples, 'postal.abnf'),
-    startRule: 'postal_address', // FIXME: should be 'postal-address'
+    startRule: 'postal-address',
     usesCoreRules: true,
     hiddenRules: ['suffix', 'zip-code']
 });
@@ -272,8 +269,7 @@ const _abnf = abnf({
 
 const dhall = abnf({
     source: path.join(examples, 'dhall.abnf'),
-    startRule: 'complete_expression', // FIXME
-    usesCoreRules: false,
+    startRule: 'complete-expression',
 });
 
 postal.generate();
