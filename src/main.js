@@ -245,8 +245,30 @@ ${convert(node.firstNamedChild)}
             const { spawnSync } = require('child_process');
             const treeSitterResult = spawnSync('tree-sitter', ['generate'], { cwd: testDir });
             if (treeSitterResult.status !== 0) {
-                console.error(treeSitterResult.stderr.toString());
+		const err = treeSitterResult.stderr.toString();
+                console.error(err);
+
+
+		const suggest = (msg) => console.log(`\x1b[33m\t${msg}\x1b[0m`);
+
+		const emptyStringErr = err.match(/The rule `([^`]*)` matches the empty string./);
+		if (emptyStringErr) {
+		    suggest(`Try inlining rule: ${emptyStringErr[1]}`);
+		    // TODO: automatically apply inlining suggestion
+		}
+
+		// TODO: "Specify a higher precedence in `c_wsp` than in the other rules."
+		// TODO: "Specify a left or right associativity in `rulelist_repeat2`"
+
+		const addConflict = err.match(/Add a conflict for these rules: `([^`]*)`(?:, `([^`]*)`)*/);
+		if (addConflict) {
+		    const conflict = '[' + addConflict.slice(1).map(x => `$.${normalizeRulename(x)}`).join(', ') + ']'
+		    suggest(`\x1b[33mTry adding conflict: ${conflict}\x1b[0m`);
+		    // TODO: automatically add conflict
+		}
             }
+
+	    console.log('\n\n');
         }
     };
 }
