@@ -238,7 +238,7 @@ ${convert(node.firstNamedChild)}
 			assert(x2.type === 'HEXDIG');
 			hexChars = hexChars.concat(`\\x${x1.text}${x2.text}`);
                     }
-                    return `'${hexChars}'`;
+                    return `"${hexChars}"`;
 		} else if (node.children.length <= 7) {
                     assert(node.child(0).type === 'x');
                     let hexChars = '';
@@ -247,7 +247,7 @@ ${convert(node.firstNamedChild)}
 			assert(x.type === 'HEXDIG');
 			hexChars = hexChars.concat(x.text);
                     }
-                    return `'\\u${hexChars.padStart(4, '0')}'`;
+                    return `"\\u${hexChars.padStart(4, '0')}"`;
 		} else {
                     unsupported(node);
 		}
@@ -333,7 +333,7 @@ ${convert(node.firstNamedChild)}
     };
 }
 
-const examples = '../tree-sitter-abnf/examples';
+const examples = 'examples/abnf';
 
 const postal = abnf({
     source: path.join(examples, 'postal.abnf'),
