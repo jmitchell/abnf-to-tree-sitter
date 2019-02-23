@@ -27,7 +27,11 @@ const abnf = (options={}) => {
 	return parser.parse(sourceCode);
     };
 
-    const toTreeSitter = (abnfTree, startRule, langName='the_language_name', includeCoreRules=true, inlineRules=[]) => {
+    // TODO: Clean up how arguments are passed here. It may be
+    // tempting to use the corresponding const values defined above,
+    // but when tree-sitter suggestions are applied automatically the
+    // arguments may differ.
+    const toTreeSitter = (abnfTree, startRule, langName='the_language_name', includeCoreRules=true, inlineRules=[], conflicts=[], hiddenRules=[]) => {
 	const unsupported = (node) => {
             console.error("\x1b[31munsupported node type: \x1b[1m" + node.type.toString() + "\t" + node.text + "\x1b[0m");
 	};
@@ -65,11 +69,11 @@ const abnf = (options={}) => {
 		  .map(x => {
 		      const name = normalizeRulename(x.descendantsOfType('rulename')[0].text);
 		      const body = convert(x.descendantsOfType('elements')[0]);
-		      return `${name} = $ => ${body};`
+		      return `const ${name} = $ => ${body};`
 		  })
-		  .join('\n\n');
+		  .join('\n');
 	};
-	
+
 	const convert = (node) => {
             switch (node.type) {
             case 'source_file':
@@ -80,10 +84,14 @@ ${inlineRuleFuncs(node)}
 module.exports = grammar({
   name: '${langName}',
 
-  conflicts: $ => [ ${conflicts.join(', ')} ],
+  conflicts: $ => [
+    ${conflicts.join(',\n    ')}
+  ],
 
   rules: {
+    // start rule
     source_file: $ => $.${startRule},
+
 ${convert(node.firstNamedChild)}
     ${coreRules}
   }
@@ -101,12 +109,15 @@ ${convert(node.firstNamedChild)}
             case 'elements':
 		return node.namedChildren.map(convert);
             case 'rule':
-		const name = convert(node.descendantsOfType('rulename')[0]);
+		let name = convert(node.descendantsOfType('rulename')[0]);
 		if (inlineRules.includes(name)) {
 		    // console.log(`skipping inlined rule: ${name}`);
 		    return '';
 		}
-		
+		if (hiddenRules.includes(name)) {
+		    name = '_' + name;
+		}
+
 		const defType = convert(node.descendantsOfType('defined_as')[0]);
 		const elements = convert(node.descendantsOfType('elements')[0]);
 
@@ -121,11 +132,13 @@ ${convert(node.firstNamedChild)}
 		return node.text.trim();
             case 'alternation':
 		assert(node.namedChildren.length >= 1);
+		// TODO: support interleaved comments, each followed by \r\n
 		return (node.namedChildren.length === 1)
                     ? convert(node.firstNamedChild)
                     : `choice(${node.namedChildren.filter(x => x.type !== 'comment').map(convert).join(', ')})`;
             case 'concatenation':
 		assert(node.namedChildren.length >= 1);
+		// TODO: support interleaved comments, each followed by \r\n
 		return (node.namedChildren.length === 1)
                     ? convert(node.firstNamedChild)
                     : `seq(${node.namedChildren.filter(x => x.type !== 'comment').map(convert).join(', ')})`;
@@ -172,10 +185,14 @@ ${convert(node.firstNamedChild)}
 		switch (node.firstNamedChild.type) {
 		case 'rulename':
 		case 'core_rulename':
-		    const name = normalizeRulename(node.text.trim());
-		    return (inlineRules.includes(name))
-			? `${name}($)`
-			: `$.${name}`;
+		    let name = normalizeRulename(node.text.trim());
+		    if (inlineRules.includes(name)) {
+			return `${name}($)`;
+		    }
+		    if (hiddenRules.includes(name)) {
+			name = '_' + name;
+		    }
+		    return `$.${name}`;
 		default:
                     return convert(node.firstNamedChild);
 		}
@@ -256,7 +273,7 @@ ${convert(node.firstNamedChild)}
 
         parsedGrammar: abnfGrammar(grammarSource),
 
-        treeSitter() { return toTreeSitter(this.parsedGrammar, this.startRule, this.languageName, this.includeCoreRules, this.inlineRules, this.conflicts); },
+        treeSitter() { return toTreeSitter(this.parsedGrammar, this.startRule, this.languageName, this.includeCoreRules, this.inlineRules, this.conflicts, this.hiddenRules); },
 
         generate() {
             // TODO: Check if any of the tree-sitter* npm packages can
@@ -265,6 +282,7 @@ ${convert(node.firstNamedChild)}
             // locally installed tree-sitter-cli.
 
             const testDir = `./build/test/${this.languageName}`;
+	    const grammarFile = `${testDir}/grammar.js`;
             if (!fs.existsSync(testDir)) {
                 // NB: After stable Atom supports Node 10.x remove mkdirp
                 // dependency and replace these lines.
@@ -272,14 +290,15 @@ ${convert(node.firstNamedChild)}
                 mkdirp.sync(testDir);
                 // fs.mkdirSync(testDir, { recursive: true });
             }
-            fs.writeFileSync(`${testDir}/grammar.js`, this.treeSitter());
+            fs.writeFileSync(`${grammarFile}`, this.treeSitter());
 
-            console.log(`\x1b[32mGenerating tree-sitter grammar from ${testDir}/grammar.js ...\x1b[0m\n`);
+            console.log(`\x1b[32mGenerating tree-sitter grammar from ${grammarFile} ...\x1b[0m\n`);
 
             const { spawnSync } = require('child_process');
             const treeSitterResult = spawnSync('tree-sitter', ['generate'], { cwd: testDir });
             if (treeSitterResult.status === 0) {
 		console.log('\x1b[32mSuccess!\x1b[0m');
+		console.log(`\n\tMax line width: ${spawnSync('wc', ['-L', grammarFile]).stdout.toString()}`);
 	    } else {
 		const err = treeSitterResult.stderr.toString();
                 console.log(`\x1b[31m${err}\x1b[0m`);
@@ -320,8 +339,8 @@ const postal = abnf({
     source: path.join(examples, 'postal.abnf'),
     startRule: 'postal-address',
     usesCoreRules: true,
-    hiddenRules: ['suffix', 'zip-code'],
-    inlineRules: ['first-name'],
+    // hiddenRules: ['suffix', 'zip-code'],
+    // inlineRules: ['first-name'],
     // conflicts: [['apt', 'house-num']]
     // conflicts: ['[ $.apt, $.house_num ]'] // TODO: support the ABNF names
 });
