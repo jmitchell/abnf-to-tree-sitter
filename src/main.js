@@ -307,15 +307,23 @@ ${convert(node.firstNamedChild)}
 		const suggest = (msg) => console.log(`\x1b[33m\t${msg}\x1b[0m`);
 
 		const emptyStringErr = err.match(/The rule `([^`]*)` matches the empty string./);
+		const higherPrecedence = err.match(/Specify a higher precedence in `([^`]*)` than in the other rules./);
+		const associativity = err.match(/Specify a left or right associativity in `([^`]*)`/);		
 		const addConflict = err.match(/Add a conflict for these rules: (`.*`)/);
 
-		// TODO: "Specify a higher precedence in `c_wsp` than in the other rules."
-		// TODO: "Specify a left or right associativity in `rulelist_repeat2`"
+
+		// TODO: Model as a search tree with backtracking
+		// instead of merely incrementally applying new
+		// suggestions.
 
 		if (emptyStringErr) {
 		    suggest(`Attempting to inline rule: '${emptyStringErr[1]}'\n`);
 		    this.inlineRules.push(emptyStringErr[1]);
 		    this.generate();
+		} else if (higherPrecedence) {
+		    suggest(`Try specifying a higher precedence: '${higherPrecedence[1]}'\n`);
+		} else if (associativity) {
+		    suggest(`Try specifying left or right associativity: '${associativity[1]}'\n`);
 		} else if (addConflict) {
 		    const convertQuotedName = (name) => '$.' + normalizeRulename(name.trim().replace(/`/g, ''));
 		    const conflict = '[' + addConflict[1].split(',').map(convertQuotedName).join(', ') + ']';
@@ -358,6 +366,6 @@ const dhall = abnf({
     inlineRules: ['whitespace']
 });
 
-postal.generate();
+// postal.generate();
 _abnf.generate();
-dhall.generate();
+// dhall.generate();
