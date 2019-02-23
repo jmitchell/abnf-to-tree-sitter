@@ -15,6 +15,7 @@ const abnf = (options={}) => {
     const hiddenRules = (options.hiddenRules || []).map(normalizeRulename);
     const inlineRules = (options.inlineRules || []).map(normalizeRulename);
     const conflicts = (options.conflicts || []).map(normalizeRulename);
+    const leftAssociative = options.leftAssociative || {}; // TODO: rename keys using normalizeRulename
 
     const abnfGrammar = (abnfFile) => {
 	const Parser = require('tree-sitter');
@@ -31,7 +32,7 @@ const abnf = (options={}) => {
     // tempting to use the corresponding const values defined above,
     // but when tree-sitter suggestions are applied automatically the
     // arguments may differ.
-    const toTreeSitter = (abnfTree, startRule, langName='the_language_name', includeCoreRules=true, inlineRules=[], conflicts=[], hiddenRules=[]) => {
+    const toTreeSitter = (abnfTree, startRule, langName='the_language_name', includeCoreRules=true, inlineRules=[], conflicts=[], hiddenRules=[], leftAssociative={}) => {
 	const unsupported = (node) => {
             console.error("\x1b[31munsupported node type: \x1b[1m" + node.type.toString() + "\t" + node.text + "\x1b[0m");
 	};
@@ -56,6 +57,11 @@ const abnf = (options={}) => {
     WSP: $ => choice($.SP, $.HTAB)
 `;
 
+	// TODO: Experiment with the `inline` array documented at
+	// http://tree-sitter.github.io/tree-sitter/creating-parsers,
+	// and see if it can be used instead of inlineRuleFuncs to
+	// deal with the no-rules-can-match-the-empty-string
+	// limitation.
 	const inlineRuleFuncs = (node) => {
 	    assert(node.type === 'source_file');
 	    assert(node.children.length === 1);
@@ -78,11 +84,13 @@ const abnf = (options={}) => {
             switch (node.type) {
             case 'source_file':
 		assert(node.namedChildren.length === 1);
-		return `
+		return`
 ${inlineRuleFuncs(node)}
 
 module.exports = grammar({
   name: '${langName}',
+
+  extras: $ => [],
 
   conflicts: $ => [
     ${conflicts.join(',\n    ')}
@@ -119,7 +127,12 @@ ${convert(node.firstNamedChild)}
 		}
 
 		const defType = convert(node.descendantsOfType('defined_as')[0]);
-		const elements = convert(node.descendantsOfType('elements')[0]);
+		let elements = convert(node.descendantsOfType('elements')[0]);
+
+		if (leftAssociative.hasOwnProperty(name)) {
+		    const precedence = leftAssociative[name];
+		    elements = `prec.left(${precedence}, ${elements})`;
+		}
 
 		// TODO: support the '/=' operator
 		if (defType === '/=') { unsupported(defType); }
@@ -211,6 +224,9 @@ ${convert(node.firstNamedChild)}
 		// values is conventional (i.e. encoding (ranges of)
 		// characters), and especially whether there are other
 		// common yet incompatible interpretations.
+		//
+		// ABNF's self-descriptive grammar does this. See RFC
+		// 5234, Appendix B (esp B.2).
 		if (node.children.length === 0) {
                     assert(false, "ZERO children");
 		}
@@ -267,13 +283,14 @@ ${convert(node.firstNamedChild)}
         startRule,
         languageName,
         includeCoreRules,
-        hiddenRules,		// TODO: use this
+        hiddenRules,
 	inlineRules,
 	conflicts,
+	leftAssociative,
 
         parsedGrammar: abnfGrammar(grammarSource),
 
-        treeSitter() { return toTreeSitter(this.parsedGrammar, this.startRule, this.languageName, this.includeCoreRules, this.inlineRules, this.conflicts, this.hiddenRules); },
+        treeSitter() { return toTreeSitter(this.parsedGrammar, this.startRule, this.languageName, this.includeCoreRules, this.inlineRules, this.conflicts, this.hiddenRules, this.leftAssociative); },
 
         generate() {
             // TODO: Check if any of the tree-sitter* npm packages can
@@ -306,33 +323,36 @@ ${convert(node.firstNamedChild)}
 
 		const suggest = (msg) => console.log(`\x1b[33m\t${msg}\x1b[0m`);
 
-		const emptyStringErr = err.match(/The rule `([^`]*)` matches the empty string./);
-		const higherPrecedence = err.match(/Specify a higher precedence in `([^`]*)` than in the other rules./);
-		const associativity = err.match(/Specify a left or right associativity in `([^`]*)`/);		
-		const addConflict = err.match(/Add a conflict for these rules: (`.*`)/);
+		const emptyStringErr = /The rule `([^`]*)` matches the empty string./g;
+		const higherPrecedence = /Specify a higher precedence in `([^`]*)` than in the other rules./g;
+		const associativity = /Specify a left or right associativity in `([^`]*)`/g;
+		const addConflict = /Add a conflict for these rules: (`.*`)/g;
 
 
 		// TODO: Model as a search tree with backtracking
 		// instead of merely incrementally applying new
 		// suggestions.
 
-		if (emptyStringErr) {
-		    suggest(`Attempting to inline rule: '${emptyStringErr[1]}'\n`);
-		    this.inlineRules.push(emptyStringErr[1]);
+		let matches;
+		while (matches = emptyStringErr.exec(err)) {
+		    suggest(`Attempting to inline rule: '${matches[1]}'\n`);
+		    this.inlineRules.push(matches[1]);
 		    this.generate();
-		} else if (higherPrecedence) {
-		    suggest(`Try specifying a higher precedence: '${higherPrecedence[1]}'\n`);
-		} else if (associativity) {
-		    suggest(`Try specifying left or right associativity: '${associativity[1]}'\n`);
-		} else if (addConflict) {
+		}
+		while (matches = higherPrecedence.exec(err)) {
+		    suggest(`Try specifying a higher precedence: '${matches[1]}'\n`);
+		    // TODO: try automatically
+		}
+		while (matches = associativity.exec(err)) {
+		    suggest(`Try specifying left or right associativity: '${matches[1]}'\n`);
+		    // TODO: try automatically (see this.leftAssociative)
+		}
+		while (matches = addConflict.exec(err)) {
 		    const convertQuotedName = (name) => '$.' + normalizeRulename(name.trim().replace(/`/g, ''));
-		    const conflict = '[' + addConflict[1].split(',').map(convertQuotedName).join(', ') + ']';
-		    suggest(`\x1b[33mTry adding conflict: ${conflict}\x1b[0m`);
-		    // TODO: automatically add conflict
+		    const conflict = '[' + matches[1].split(',').map(convertQuotedName).join(', ') + ']';
+		    suggest(`Attempting to add conflict: ${conflict}`);
 		    this.conflicts.push(conflict);
 		    this.generate();
-		} else {
-		    console.log(`\x1b[31mGiving up :(\x1b[0m`);
 		}
             }
 
@@ -357,7 +377,10 @@ const _abnf = abnf({
     source: path.join(examples, 'abnf.abnf'),
     startRule: 'rulelist',
     usesCoreRules: false,       // it defines them
-    hiddenRules: ['c-wsp', 'c-nl', 'CR', 'CRLF', 'DQUOTE', 'HTAB', 'LF', 'SP', 'WSP']
+    hiddenRules: ['c-wsp', 'c-nl', 'CR', 'CRLF', 'DQUOTE', 'HTAB', 'LF', 'SP', 'WSP'],
+    leftAssociative: {
+	'elements': 1
+    }
 });
 
 const dhall = abnf({
