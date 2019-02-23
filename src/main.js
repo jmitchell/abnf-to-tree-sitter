@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const abnf = (options={}) => {
-    const normalizeRulename = (name) => name.replace(/-/g, '_');
+    const normalizeRulename = (name) => name.trim().replace(/-/g, '_');
 
     // required parameters
     const grammarSource = options.source || assert(false, 'missing required option: "source"');
@@ -13,6 +13,8 @@ const abnf = (options={}) => {
     const languageName = options.name || path.basename(grammarSource, path.extname(grammarSource));
     const includeCoreRules = options.usesCoreRules || false;
     const hiddenRules = (options.hiddenRules || []).map(normalizeRulename);
+    const inlineRules = (options.inlineRules || []).map(normalizeRulename);
+    const conflicts = (options.conflicts || []).map(normalizeRulename);
 
     const abnfGrammar = (abnfFile) => {
 	const Parser = require('tree-sitter');
@@ -25,7 +27,7 @@ const abnf = (options={}) => {
 	return parser.parse(sourceCode);
     };
 
-    const toTreeSitter = (abnfTree, startRule, langName='the_language_name', includeCoreRules=true) => {
+    const toTreeSitter = (abnfTree, startRule, langName='the_language_name', includeCoreRules=true, inlineRules=[]) => {
 	const unsupported = (node) => {
             console.error("\x1b[31munsupported node type: \x1b[1m" + node.type.toString() + "\t" + node.text + "\x1b[0m");
 	};
@@ -50,13 +52,35 @@ const abnf = (options={}) => {
     WSP: $ => choice($.SP, $.HTAB)
 `;
 
+	const inlineRuleFuncs = (node) => {
+	    assert(node.type === 'source_file');
+	    assert(node.children.length === 1);
+	    return node
+		  .firstChild
+		  .descendantsOfType('rule')
+		  .filter(x => {
+		      const name = normalizeRulename(x.descendantsOfType('rulename')[0].text);
+		      return inlineRules.includes(name);
+		  })
+		  .map(x => {
+		      const name = normalizeRulename(x.descendantsOfType('rulename')[0].text);
+		      const body = convert(x.descendantsOfType('elements')[0]);
+		      return `${name} = $ => ${body};`
+		  })
+		  .join('\n\n');
+	};
+	
 	const convert = (node) => {
             switch (node.type) {
             case 'source_file':
 		assert(node.namedChildren.length === 1);
 		return `
+${inlineRuleFuncs(node)}
+
 module.exports = grammar({
   name: '${langName}',
+
+  conflicts: $ => [ ${conflicts.join(', ')} ],
 
   rules: {
     source_file: $ => $.${startRule},
@@ -78,6 +102,11 @@ ${convert(node.firstNamedChild)}
 		return node.namedChildren.map(convert);
             case 'rule':
 		const name = convert(node.descendantsOfType('rulename')[0]);
+		if (inlineRules.includes(name)) {
+		    // console.log(`skipping inlined rule: ${name}`);
+		    return '';
+		}
+		
 		const defType = convert(node.descendantsOfType('defined_as')[0]);
 		const elements = convert(node.descendantsOfType('elements')[0]);
 
@@ -143,7 +172,10 @@ ${convert(node.firstNamedChild)}
 		switch (node.firstNamedChild.type) {
 		case 'rulename':
 		case 'core_rulename':
-                    return `$.${normalizeRulename(node.text)}`;
+		    const name = normalizeRulename(node.text.trim());
+		    return (inlineRules.includes(name))
+			? `${name}($)`
+			: `$.${name}`;
 		default:
                     return convert(node.firstNamedChild);
 		}
@@ -219,10 +251,12 @@ ${convert(node.firstNamedChild)}
         languageName,
         includeCoreRules,
         hiddenRules,		// TODO: use this
+	inlineRules,
+	conflicts,
 
         parsedGrammar: abnfGrammar(grammarSource),
 
-        treeSitter() { return toTreeSitter(this.parsedGrammar, this.startRule, this.languageName, this.includeCoreRules); },
+        treeSitter() { return toTreeSitter(this.parsedGrammar, this.startRule, this.languageName, this.includeCoreRules, this.inlineRules, this.conflicts); },
 
         generate() {
             // TODO: Check if any of the tree-sitter* npm packages can
@@ -240,31 +274,38 @@ ${convert(node.firstNamedChild)}
             }
             fs.writeFileSync(`${testDir}/grammar.js`, this.treeSitter());
 
-            console.log(`\x1b[32mGenerating tree-sitter grammar from ${testDir}/grammar.js ...\x1b[0m`);
+            console.log(`\x1b[32mGenerating tree-sitter grammar from ${testDir}/grammar.js ...\x1b[0m\n`);
 
             const { spawnSync } = require('child_process');
             const treeSitterResult = spawnSync('tree-sitter', ['generate'], { cwd: testDir });
-            if (treeSitterResult.status !== 0) {
+            if (treeSitterResult.status === 0) {
+		console.log('\x1b[32mSuccess!\x1b[0m');
+	    } else {
 		const err = treeSitterResult.stderr.toString();
-                console.error(err);
+                console.log(`\x1b[31m${err}\x1b[0m`);
 
 
 		const suggest = (msg) => console.log(`\x1b[33m\t${msg}\x1b[0m`);
 
 		const emptyStringErr = err.match(/The rule `([^`]*)` matches the empty string./);
-		if (emptyStringErr) {
-		    suggest(`Try inlining rule: ${emptyStringErr[1]}`);
-		    // TODO: automatically apply inlining suggestion
-		}
+		const addConflict = err.match(/Add a conflict for these rules: (`.*`)/);
 
 		// TODO: "Specify a higher precedence in `c_wsp` than in the other rules."
 		// TODO: "Specify a left or right associativity in `rulelist_repeat2`"
 
-		const addConflict = err.match(/Add a conflict for these rules: `([^`]*)`(?:, `([^`]*)`)*/);
-		if (addConflict) {
-		    const conflict = '[' + addConflict.slice(1).map(x => `$.${normalizeRulename(x)}`).join(', ') + ']'
+		if (emptyStringErr) {
+		    suggest(`Attempting to inline rule: '${emptyStringErr[1]}'\n`);
+		    this.inlineRules.push(emptyStringErr[1]);
+		    this.generate();
+		} else if (addConflict) {
+		    const convertQuotedName = (name) => '$.' + normalizeRulename(name.trim().replace(/`/g, ''));
+		    const conflict = '[' + addConflict[1].split(',').map(convertQuotedName).join(', ') + ']';
 		    suggest(`\x1b[33mTry adding conflict: ${conflict}\x1b[0m`);
 		    // TODO: automatically add conflict
+		    this.conflicts.push(conflict);
+		    this.generate();
+		} else {
+		    console.log(`\x1b[31mGiving up :(\x1b[0m`);
 		}
             }
 
@@ -279,7 +320,10 @@ const postal = abnf({
     source: path.join(examples, 'postal.abnf'),
     startRule: 'postal-address',
     usesCoreRules: true,
-    hiddenRules: ['suffix', 'zip-code']
+    hiddenRules: ['suffix', 'zip-code'],
+    inlineRules: ['first-name'],
+    // conflicts: [['apt', 'house-num']]
+    // conflicts: ['[ $.apt, $.house_num ]'] // TODO: support the ABNF names
 });
 
 const _abnf = abnf({
@@ -292,6 +336,7 @@ const _abnf = abnf({
 const dhall = abnf({
     source: path.join(examples, 'dhall.abnf'),
     startRule: 'complete-expression',
+    inlineRules: ['whitespace']
 });
 
 postal.generate();
