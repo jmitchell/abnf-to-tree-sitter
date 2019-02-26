@@ -57,11 +57,6 @@ const abnf = (options={}) => {
     WSP: $ => choice($.SP, $.HTAB)
 `;
 
-	// TODO: Experiment with the `inline` array documented at
-	// http://tree-sitter.github.io/tree-sitter/creating-parsers,
-	// and see if it can be used instead of inlineRuleFuncs to
-	// deal with the no-rules-can-match-the-empty-string
-	// limitation.
 	const inlineRuleFuncs = (node) => {
 	    assert(node.type === 'source_file');
 	    assert(node.children.length === 1);
