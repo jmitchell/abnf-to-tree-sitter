@@ -98,7 +98,8 @@ module.exports = grammar({
 ${convert(node.firstNamedChild)}
     ${coreRules}
   }
-});`;
+});
+`;
             case 'comment':
 		return `    // ${node.text.trimRight()}`;
             case 'rulelist':
@@ -238,7 +239,18 @@ ${convert(node.firstNamedChild)}
 			  .map(x => x.text)
 			  .join('')
 			  .padStart(4, '0');
-                    return `/[\\u${beforeSep}-\\u${afterSep}]/`;
+                    // return `/[\\u{${beforeSep}}-\\u{${afterSep}}]/u`;
+
+		    // Hack to avoid high surrogates (see
+		    // https://github.com/tree-sitter/tree-sitter/issues/286)
+		    return (parseInt(afterSep, 16) >= 0xD800)
+			? `/[\\u${beforeSep}-\\uD7FF]/`
+			: `/[\\u${beforeSep}-\\u${afterSep}]/`;
+
+		    // case u32::from_str_radix(afterSep, 16) {
+		    // 	Ok(n) if n >= 0xD800 => return `/[\\u${beforeSep}-\\uD7FF]/`
+		    // 	_ => return `/[\\u${beforeSep}-\\u${afterSep}]/`;
+		    // }
 		} else if (node.children.length % 3 === 0) {
                     let hexChars = '';
                     for (var i = 0; i < node.children.length; i += 3) {
@@ -385,5 +397,5 @@ const dhall = abnf({
 });
 
 // postal.generate();
-_abnf.generate();
-// dhall.generate();
+// _abnf.generate();
+dhall.generate();
